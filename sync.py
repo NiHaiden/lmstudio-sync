@@ -20,6 +20,48 @@ litellm_headers = {
 }
 
 
+def extract_model_names(payload: dict) -> set[str]:
+    names = set()
+
+    for item in payload.get("data", []):
+        if isinstance(item, str):
+            names.add(item)
+            continue
+
+        if not isinstance(item, dict):
+            continue
+
+        name = item.get("model_name") or item.get("id")
+        if name:
+            names.add(name)
+
+    return names
+
+
+def get_existing_litellm_models() -> set[str]:
+    for endpoint in ("/model/info", "/models"):
+        response = requests.get(
+            f"{LITELLM_BASE}{endpoint}",
+            headers=litellm_headers,
+            timeout=20,
+        )
+
+        if response.ok:
+            return extract_model_names(response.json())
+
+        if endpoint == "/model/info" and response.status_code >= 500:
+            print(
+                f"LiteLLM {endpoint} failed with HTTP {response.status_code}; "
+                "falling back to /models",
+                flush=True,
+            )
+            continue
+
+        response.raise_for_status()
+
+    return set()
+
+
 def synchronize() -> None:
     response = requests.get(
         f"{LM_STUDIO_BASE}/models",
@@ -34,17 +76,7 @@ def synchronize() -> None:
         if item.get("id")
     }
 
-    response = requests.get(
-        f"{LITELLM_BASE}/model/info",
-        headers=litellm_headers,
-        timeout=20,
-    )
-    response.raise_for_status()
-
-    existing_models = {
-        item.get("model_name")
-        for item in response.json().get("data", [])
-    }
+    existing_models = get_existing_litellm_models()
 
     for upstream_id in sorted(upstream_models):
         public_name = f"lmstudio/{upstream_id}"
